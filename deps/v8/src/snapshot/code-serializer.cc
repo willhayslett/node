@@ -22,6 +22,17 @@
 namespace v8 {
 namespace internal {
 
+ScriptData::ScriptData(const byte* data, int length)
+    : owns_data_(false), rejected_(false), data_(data), length_(length) {
+  if (!IsAligned(reinterpret_cast<intptr_t>(data), kPointerAlignment)) {
+    byte* copy = NewArray<byte>(length);
+    DCHECK(IsAligned(reinterpret_cast<intptr_t>(copy), kPointerAlignment));
+    CopyBytes(copy, data, length);
+    data_ = copy;
+    AcquireDataOwnership();
+  }
+}
+
 ScriptData* CodeSerializer::Serialize(Isolate* isolate,
                                       Handle<SharedFunctionInfo> info,
                                       Handle<String> source) {
@@ -52,7 +63,8 @@ ScriptData* CodeSerializer::Serialize(Isolate* isolate,
 ScriptData* CodeSerializer::Serialize(Handle<HeapObject> obj) {
   DisallowHeapAllocation no_gc;
 
-  VisitRootPointer(Root::kHandleScope, Handle<Object>::cast(obj).location());
+  VisitRootPointer(Root::kHandleScope, nullptr,
+                   Handle<Object>::cast(obj).location());
   SerializeDeferredObjects();
   Pad();
 
@@ -134,14 +146,16 @@ void CodeSerializer::SerializeObject(HeapObject* obj, HowToCode how_to_code,
     // TODO(7110): Enable serializing of Asm modules once the AsmWasmData
     // is context independent.
     DCHECK(!sfi->IsApiFunction() && !sfi->HasAsmWasmData());
-    // Do not serialize when a debugger is active.
-    DCHECK(sfi->debug_info()->IsSmi());
+    // Clear debug info.
+    Object* debug_info = sfi->debug_info();
+    sfi->set_debug_info(Smi::kZero);
 
     // Mark SFI to indicate whether the code is cached.
     bool was_deserialized = sfi->deserialized();
     sfi->set_deserialized(sfi->is_compiled());
     SerializeGeneric(obj, how_to_code, where_to_point);
     sfi->set_deserialized(was_deserialized);
+    sfi->set_debug_info(debug_info);
     return;
   }
 
@@ -248,9 +262,7 @@ WasmCompiledModuleSerializer::WasmCompiledModuleSerializer(
 }
 
 std::unique_ptr<ScriptData> WasmCompiledModuleSerializer::SerializeWasmModule(
-    Isolate* isolate, Handle<FixedArray> input) {
-  Handle<WasmCompiledModule> compiled_module =
-      Handle<WasmCompiledModule>::cast(input);
+    Isolate* isolate, Handle<WasmCompiledModule> compiled_module) {
   WasmCompiledModuleSerializer wasm_cs(
       isolate, 0, isolate->native_context(),
       handle(compiled_module->shared()->module_bytes()));
@@ -258,11 +270,11 @@ std::unique_ptr<ScriptData> WasmCompiledModuleSerializer::SerializeWasmModule(
   return std::unique_ptr<ScriptData>(data);
 }
 
-MaybeHandle<FixedArray> WasmCompiledModuleSerializer::DeserializeWasmModule(
+MaybeHandle<WasmCompiledModule>
+WasmCompiledModuleSerializer::DeserializeWasmModule(
     Isolate* isolate, ScriptData* data, Vector<const byte> wire_bytes) {
-  MaybeHandle<FixedArray> nothing;
   if (!wasm::IsWasmCodegenAllowed(isolate, isolate->native_context())) {
-    return nothing;
+    return MaybeHandle<WasmCompiledModule>();
   }
   SerializedCodeData::SanityCheckResult sanity_check_result =
       SerializedCodeData::CHECK_SUCCESS;
@@ -271,7 +283,7 @@ MaybeHandle<FixedArray> WasmCompiledModuleSerializer::DeserializeWasmModule(
       isolate, data, 0, &sanity_check_result);
 
   if (sanity_check_result != SerializedCodeData::CHECK_SUCCESS) {
-    return nothing;
+    return MaybeHandle<WasmCompiledModule>();
   }
 
   // TODO(6792): No longer needed once WebAssembly code is off heap.
@@ -281,10 +293,10 @@ MaybeHandle<FixedArray> WasmCompiledModuleSerializer::DeserializeWasmModule(
                                                         wire_bytes);
 
   Handle<WasmCompiledModule> result;
-  if (!maybe_result.ToHandle(&result)) return nothing;
+  if (!maybe_result.ToHandle(&result)) return MaybeHandle<WasmCompiledModule>();
 
   WasmCompiledModule::ReinitializeAfterDeserialization(isolate, result);
-  DCHECK(WasmCompiledModule::IsWasmCompiledModule(*result));
+  DCHECK(result->IsWasmCompiledModule());
   return result;
 }
 

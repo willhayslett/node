@@ -168,7 +168,7 @@ void CallOrConstructBuiltinsAssembler::CallOrConstructWithArrayLike(
     Node* elements_length = LoadFixedArrayBaseLength(elements);
     GotoIfNot(WordEqual(length, elements_length), &if_runtime);
     var_elements.Bind(elements);
-    var_length.Bind(SmiToWord32(length));
+    var_length.Bind(SmiToInt32(length));
     Goto(&if_done);
   }
 
@@ -276,25 +276,16 @@ void CallOrConstructBuiltinsAssembler::CallOrConstructWithSpread(
   Node* spread_map = LoadMap(spread);
   GotoIfNot(IsJSArrayMap(spread_map), &if_runtime);
 
-  // Check that we have the original ArrayPrototype.
+  // Check that we have the original Array.prototype.
   GotoIfNot(IsPrototypeInitialArrayPrototype(context, spread_map), &if_runtime);
 
-  // Check that the ArrayPrototype hasn't been modified in a way that would
+  // Check that the Array.prototype hasn't been modified in a way that would
   // affect iteration.
   Node* protector_cell = LoadRoot(Heap::kArrayIteratorProtectorRootIndex);
   DCHECK(isolate()->heap()->array_iterator_protector()->IsPropertyCell());
-  GotoIfNot(
-      WordEqual(LoadObjectField(protector_cell, PropertyCell::kValueOffset),
-                SmiConstant(Isolate::kProtectorValid)),
-      &if_runtime);
-
-  // Check that the map of the initial array iterator hasn't changed.
-  Node* native_context = LoadNativeContext(context);
-  Node* arr_it_proto_map = LoadMap(CAST(LoadContextElement(
-      native_context, Context::INITIAL_ARRAY_ITERATOR_PROTOTYPE_INDEX)));
-  Node* initial_map = LoadContextElement(
-      native_context, Context::INITIAL_ARRAY_ITERATOR_PROTOTYPE_MAP_INDEX);
-  GotoIfNot(WordEqual(arr_it_proto_map, initial_map), &if_runtime);
+  GotoIf(WordEqual(LoadObjectField(protector_cell, PropertyCell::kValueOffset),
+                   SmiConstant(Isolate::kProtectorInvalid)),
+         &if_runtime);
 
   Node* kind = LoadMapElementsKind(spread_map);
 

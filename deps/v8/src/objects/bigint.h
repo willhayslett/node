@@ -15,6 +15,8 @@
 namespace v8 {
 namespace internal {
 
+class BigInt;
+
 // BigIntBase is just the raw data object underlying a BigInt. Use with care!
 // Most code should be using BigInts instead.
 class BigIntBase : public HeapObject {
@@ -38,7 +40,7 @@ class BigIntBase : public HeapObject {
   static const int kHeaderSize = kDigitsOffset;
 
  private:
-  friend class BigInt;
+  friend class ::v8::internal::BigInt;  // MSVC wants full namespace.
   friend class MutableBigInt;
 
   typedef uintptr_t digit_t;
@@ -137,6 +139,11 @@ class V8_EXPORT_PRIVATE BigInt : public BigIntBase {
   static Handle<BigInt> AsIntN(uint64_t n, Handle<BigInt> x);
   static MaybeHandle<BigInt> AsUintN(uint64_t n, Handle<BigInt> x);
 
+  static Handle<BigInt> FromInt64(Isolate* isolate, int64_t n);
+  static Handle<BigInt> FromUint64(Isolate* isolate, uint64_t n);
+  int64_t AsInt64(bool* lossless = nullptr);
+  uint64_t AsUint64(bool* lossless = nullptr);
+
   DECL_CAST(BigInt)
   DECL_VERIFIER(BigInt)
   DECL_PRINTER(BigInt)
@@ -162,12 +169,13 @@ class V8_EXPORT_PRIVATE BigInt : public BigIntBase {
   class BodyDescriptor;
 
  private:
-  friend class BigIntParseIntHelper;
+  friend class StringToBigIntHelper;
 
-  // Special functions for BigIntParseIntHelper:
+  // Special functions for StringToBigIntHelper:
   static Handle<BigInt> Zero(Isolate* isolate);
   static MaybeHandle<FreshlyAllocatedBigInt> AllocateFor(
-      Isolate* isolate, int radix, int charcount, ShouldThrow should_throw);
+      Isolate* isolate, int radix, int charcount, ShouldThrow should_throw,
+      PretenureFlag pretenure);
   static void InplaceMultiplyAdd(Handle<FreshlyAllocatedBigInt> x,
                                  uintptr_t factor, uintptr_t summand);
   static Handle<BigInt> Finalize(Handle<FreshlyAllocatedBigInt> x, bool sign);

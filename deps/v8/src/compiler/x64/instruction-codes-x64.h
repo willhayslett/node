@@ -149,9 +149,12 @@ namespace compiler {
   V(X64F32x4Splat)                 \
   V(X64F32x4ExtractLane)           \
   V(X64F32x4ReplaceLane)           \
+  V(X64F32x4Abs)                   \
+  V(X64F32x4Neg)                   \
   V(X64F32x4RecipApprox)           \
   V(X64F32x4RecipSqrtApprox)       \
   V(X64F32x4Add)                   \
+  V(X64F32x4AddHoriz)              \
   V(X64F32x4Sub)                   \
   V(X64F32x4Mul)                   \
   V(X64F32x4Min)                   \
@@ -231,7 +234,27 @@ namespace compiler {
   V(X64S128Xor)                    \
   V(X64S128Not)                    \
   V(X64S128Select)                 \
-  V(X64S128Zero)
+  V(X64S128Zero)                   \
+  V(X64Word64AtomicAddUint8)       \
+  V(X64Word64AtomicAddUint16)      \
+  V(X64Word64AtomicAddUint32)      \
+  V(X64Word64AtomicAddUint64)      \
+  V(X64Word64AtomicSubUint8)       \
+  V(X64Word64AtomicSubUint16)      \
+  V(X64Word64AtomicSubUint32)      \
+  V(X64Word64AtomicSubUint64)      \
+  V(X64Word64AtomicAndUint8)       \
+  V(X64Word64AtomicAndUint16)      \
+  V(X64Word64AtomicAndUint32)      \
+  V(X64Word64AtomicAndUint64)      \
+  V(X64Word64AtomicOrUint8)        \
+  V(X64Word64AtomicOrUint16)       \
+  V(X64Word64AtomicOrUint32)       \
+  V(X64Word64AtomicOrUint64)       \
+  V(X64Word64AtomicXorUint8)       \
+  V(X64Word64AtomicXorUint16)      \
+  V(X64Word64AtomicXorUint32)      \
+  V(X64Word64AtomicXorUint64)
 
 // Addressing modes represent the "shape" of inputs to an instruction.
 // Many instructions support multiple addressing modes. Addressing modes
@@ -265,8 +288,6 @@ namespace compiler {
   V(M4I)  /* [      %r2*4 + K] */      \
   V(M8I)  /* [      %r2*8 + K] */      \
   V(Root) /* [%root       + K] */
-
-enum X64MemoryProtection { kUnprotected = 0, kProtected = 1 };
 
 }  // namespace compiler
 }  // namespace internal

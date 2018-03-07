@@ -23,6 +23,7 @@
 #include "src/log.h"
 #include "src/msan.h"
 #include "src/objects-inl.h"
+#include "src/objects/literal-objects.h"
 #include "src/objects/scope-info.h"
 #include "src/objects/script-inl.h"
 #include "src/profiler/heap-profiler.h"
@@ -299,7 +300,14 @@ AllocationResult Heap::AllocateRaw(int size_in_bytes, AllocationSpace space,
     // NEW_SPACE is not allowed here.
     UNREACHABLE();
   }
+
   if (allocation.To(&object)) {
+    if (space == CODE_SPACE) {
+      // Unprotect the memory chunk of the object if it was not unprotected
+      // already.
+      UnprotectAndRegisterMemoryChunk(object);
+      ZapCodeObject(object->address(), size_in_bytes);
+    }
     OnAllocationEvent(object, size_in_bytes);
   }
 
@@ -410,26 +418,42 @@ void Heap::FinalizeExternalString(String* string) {
 Address Heap::NewSpaceTop() { return new_space_->top(); }
 
 bool Heap::InNewSpace(Object* object) {
+  DCHECK(!Internals::HasWeakHeapObjectTag(object));
+  return InNewSpace(MaybeObject::FromObject(object));
+}
+
+bool Heap::InFromSpace(Object* object) {
+  DCHECK(!Internals::HasWeakHeapObjectTag(object));
+  return InFromSpace(MaybeObject::FromObject(object));
+}
+
+bool Heap::InToSpace(Object* object) {
+  DCHECK(!Internals::HasWeakHeapObjectTag(object));
+  return InToSpace(MaybeObject::FromObject(object));
+}
+
+bool Heap::InNewSpace(MaybeObject* object) {
   // Inlined check from NewSpace::Contains.
-  bool result =
-      object->IsHeapObject() &&
-      Page::FromAddress(HeapObject::cast(object)->address())->InNewSpace();
+  HeapObject* heap_object;
+  bool result = object->ToStrongOrWeakHeapObject(&heap_object) &&
+                Page::FromAddress(heap_object->address())->InNewSpace();
   DCHECK(!result ||                 // Either not in new space
          gc_state_ != NOT_IN_GC ||  // ... or in the middle of GC
          InToSpace(object));        // ... or in to-space (where we allocate).
   return result;
 }
 
-bool Heap::InFromSpace(Object* object) {
-  return object->IsHeapObject() &&
-         MemoryChunk::FromAddress(HeapObject::cast(object)->address())
+bool Heap::InFromSpace(MaybeObject* object) {
+  HeapObject* heap_object;
+  return object->ToStrongOrWeakHeapObject(&heap_object) &&
+         MemoryChunk::FromAddress(heap_object->address())
              ->IsFlagSet(Page::IN_FROM_SPACE);
 }
 
-
-bool Heap::InToSpace(Object* object) {
-  return object->IsHeapObject() &&
-         MemoryChunk::FromAddress(HeapObject::cast(object)->address())
+bool Heap::InToSpace(MaybeObject* object) {
+  HeapObject* heap_object;
+  return object->ToStrongOrWeakHeapObject(&heap_object) &&
+         MemoryChunk::FromAddress(heap_object->address())
              ->IsFlagSet(Page::IN_TO_SPACE);
 }
 
@@ -451,6 +475,13 @@ bool Heap::ShouldBePromoted(Address old_address) {
 }
 
 void Heap::RecordWrite(Object* object, Object** slot, Object* value) {
+  DCHECK(!Internals::HasWeakHeapObjectTag(*slot));
+  DCHECK(!Internals::HasWeakHeapObjectTag(value));
+  RecordWrite(object, reinterpret_cast<MaybeObject**>(slot),
+              reinterpret_cast<MaybeObject*>(value));
+}
+
+void Heap::RecordWrite(Object* object, MaybeObject** slot, MaybeObject* value) {
   if (!InNewSpace(value) || !object->IsHeapObject() || InNewSpace(object)) {
     return;
   }
@@ -620,12 +651,14 @@ AlwaysAllocateScope::~AlwaysAllocateScope() {
 
 CodeSpaceMemoryModificationScope::CodeSpaceMemoryModificationScope(Heap* heap)
     : heap_(heap) {
+  DCHECK(!heap_->unprotected_memory_chunks_registry_enabled());
   if (heap_->write_protect_code_memory()) {
     heap_->increment_code_space_memory_modification_scope_depth();
     heap_->code_space()->SetReadAndWritable();
     LargePage* page = heap_->lo_space()->first_page();
     while (page != nullptr) {
       if (page->IsFlagSet(MemoryChunk::IS_EXECUTABLE)) {
+        CHECK(heap_->memory_allocator()->IsMemoryChunkExecutable(page));
         page->SetReadAndWritable();
       }
       page = page->next_page();
@@ -634,16 +667,36 @@ CodeSpaceMemoryModificationScope::CodeSpaceMemoryModificationScope(Heap* heap)
 }
 
 CodeSpaceMemoryModificationScope::~CodeSpaceMemoryModificationScope() {
+  DCHECK(!heap_->unprotected_memory_chunks_registry_enabled());
   if (heap_->write_protect_code_memory()) {
     heap_->decrement_code_space_memory_modification_scope_depth();
     heap_->code_space()->SetReadAndExecutable();
     LargePage* page = heap_->lo_space()->first_page();
     while (page != nullptr) {
       if (page->IsFlagSet(MemoryChunk::IS_EXECUTABLE)) {
+        CHECK(heap_->memory_allocator()->IsMemoryChunkExecutable(page));
         page->SetReadAndExecutable();
       }
       page = page->next_page();
     }
+  }
+}
+
+CodePageCollectionMemoryModificationScope::
+    CodePageCollectionMemoryModificationScope(Heap* heap)
+    : heap_(heap) {
+  if (heap_->write_protect_code_memory() &&
+      !heap_->code_space_memory_modification_scope_depth()) {
+    heap_->EnableUnprotectedMemoryChunksRegistry();
+  }
+}
+
+CodePageCollectionMemoryModificationScope::
+    ~CodePageCollectionMemoryModificationScope() {
+  if (heap_->write_protect_code_memory() &&
+      !heap_->code_space_memory_modification_scope_depth()) {
+    heap_->ProtectUnprotectedMemoryChunks();
+    heap_->DisableUnprotectedMemoryChunksRegistry();
   }
 }
 
